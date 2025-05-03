@@ -1,11 +1,14 @@
+# import os
+# from motor.motor_asyncio import AsyncIOMotorClient
+# from dotenv import load_dotenv
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
+from pymongo import MongoClient
 
-load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI")
-client = AsyncIOMotorClient(MONGO_URI)
+# load_dotenv()
+
+mongo_uri = os.getenv("MONGO_URL")
+client = MongoClient(mongo_uri)
 db = client["railway_db"]
 collection = db["items"]
 
