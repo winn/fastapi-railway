@@ -21,6 +21,19 @@ async def get_items():
     items = await collection.find().to_list(length=100)
     return [serialize(item) for item in items]
 
+@app.post("/items/query")
+async def query_item(request: Request):
+    query = await request.json()
+
+    if not query or not isinstance(query, dict):
+        raise HTTPException(status_code=400, detail="Invalid or empty JSON query")
+
+    item = await collection.find_one(query)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    return serialize(item)
+
 
 
 @app.put("/items/{item_id}")
