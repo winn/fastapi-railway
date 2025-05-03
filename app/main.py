@@ -18,12 +18,8 @@ async def create_item(item: Item):
 
 @app.get("/items")
 async def get_items():
-    try:
-        items = await collection.find().to_list(length=100)
-        return items
-    except Exception as e:
-        print("❌ Error fetching items:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    items = await collection.find().to_list(length=100)
+    return [serialize(item) for item in items]
 
 
 
