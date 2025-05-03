@@ -18,10 +18,9 @@ async def create_item(item: Item):
 
 @app.get("/items")
 async def get_items():
-    items = []
-    async for item in collection.find():
-        items.append(serialize(item))
+    items = await collection.find().to_list(length=100)
     return items
+
 
 @app.put("/items/{item_id}")
 async def update_item(item_id: str, item: UpdateItem):
