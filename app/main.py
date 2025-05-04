@@ -49,9 +49,12 @@ async def register_cluster(
     clustername: str = Body(...),
     mongouri: str = Body(...)
 ):
-    existing = await cluster_lookup_collection.find_one({"cluster": clustername})
-    if existing:
+    existing_name = await cluster_lookup_collection.find_one({"cluster": clustername})
+    existing_uri = await cluster_lookup_collection.find_one({"uri": mongouri})
+    if existing_name:
         raise HTTPException(status_code=400, detail=f"Cluster name '{clustername}' already exists")
+    if existing_uri:
+        raise HTTPException(status_code=400, detail="This MongoDB URI is already registered")
 
     await cluster_lookup_collection.insert_one({"cluster": clustername, "uri": mongouri})
     return {"status": "registered", "cluster": clustername}
