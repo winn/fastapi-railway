@@ -16,13 +16,23 @@ origins = [
     "https://your-frontend-domain.com",  # ✅ แก้เป็น domain จริงเมื่อ deploy
 ]
 
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=origins,           # หรือใช้ ["*"] ชั่วคราวใน dev
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# 👉 ใส่ CORS ตรงนี้
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,           # หรือใช้ ["*"] ชั่วคราวใน dev
+    allow_origins=["*"],  # สำหรับ dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ---------- ⚙️ Mongo Setup ----------
 MONGO_URI = os.getenv("MONGO_URL")
