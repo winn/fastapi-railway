@@ -64,7 +64,7 @@ async def register_cluster(
         "owner": owner,
         "password": password
     })
-    return {"status": "registered", "cluster": clustername, "owner": owner}
+    return {"status": "registered", "cluster": clustername, "owner": owner, "password": password}
 
 # ---------- 📊 List Registered Clusters ----------
 @app.get("/clusters")
