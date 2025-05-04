@@ -47,7 +47,9 @@ def get_collection(client: AsyncIOMotorClient, db: str, collection: str):
 @app.post("/clusters/register")
 async def register_cluster(
     clustername: str = Body(...),
-    mongouri: str = Body(...)
+    mongouri: str = Body(...),
+    owner: str = Body(...),
+    password: str = Body(...)
 ):
     existing_name = await cluster_lookup_collection.find_one({"cluster": clustername})
     existing_uri = await cluster_lookup_collection.find_one({"uri": mongouri})
@@ -56,8 +58,24 @@ async def register_cluster(
     if existing_uri:
         raise HTTPException(status_code=400, detail="This MongoDB URI is already registered")
 
-    await cluster_lookup_collection.insert_one({"cluster": clustername, "uri": mongouri})
-    return {"status": "registered", "cluster": clustername}
+    await cluster_lookup_collection.insert_one({
+        "cluster": clustername,
+        "uri": mongouri,
+        "owner": owner,
+        "password": password
+    })
+    return {"status": "registered", "cluster": clustername, "owner": owner}
+
+# ---------- 📊 List Registered Clusters ----------
+@app.get("/clusters")
+async def list_clusters():
+    clusters = await cluster_lookup_collection.find().to_list(length=100)
+    return [{
+        "cluster": c["cluster"],
+        "uri": c["uri"],
+        "owner": c.get("owner", ""),
+        "password": c.get("password", "")
+    } for c in clusters]
 
 # ---------- 📚 List All Databases ----------
 @app.get("/databases")
