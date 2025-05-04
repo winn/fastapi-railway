@@ -69,7 +69,7 @@ async def import_from_sheet(link: str = Body(..., embed=True)):
 
     result = await collection.insert_many(items)
     inserted_items = await collection.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
-    return [serialize(item) for item in inserted_items]
+    return {"status": "inserted"}
 
 
 # ---------- ✏️ Update One ----------
