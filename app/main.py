@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request, Body, Query
+from fastapi.middleware.cors import CORSMiddleware
 from app.models import Item, UpdateItem
 from bson import ObjectId
 from typing import Dict, Any, List
@@ -6,22 +7,38 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import pandas as pd
 
+# ---------- 🚀 FastAPI App ----------
 app = FastAPI()
 
-# ---------- ⚙️ Setup Mongo Client ----------
+# ---------- 🔓 CORS Settings ----------
+origins = [
+    "http://localhost:3000",  # สำหรับ dev frontend (React/Vue)
+    "https://your-frontend-domain.com",  # ✅ แก้เป็น domain จริงเมื่อ deploy
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,           # หรือใช้ ["*"] ชั่วคราวใน dev
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- ⚙️ Mongo Setup ----------
 MONGO_URI = os.getenv("MONGO_URL")
 client = AsyncIOMotorClient(MONGO_URI)
 
-# ---------- 🔄 MongoDB Document Serializer ----------
+# ---------- 🔄 Serializer ----------
 def serialize(item) -> dict:
     item["id"] = str(item["_id"])
     del item["_id"]
     return item
 
-# ---------- 🧩 Helper to Get Collection ----------
+# ---------- 🔧 Collection Resolver ----------
 def get_collection(db_name: str, collection_name: str):
     db = client[db_name]
     return db[collection_name]
+
 
 # ---------- ✅ Insert One ----------
 @app.post("/items")
@@ -35,6 +52,7 @@ async def create_item(
     new_item = await col.find_one({"_id": result.inserted_id})
     return serialize(new_item)
 
+
 # ---------- 📦 Get All Items ----------
 @app.get("/items")
 async def get_items(
@@ -45,7 +63,8 @@ async def get_items(
     items = await col.find().to_list(length=100)
     return [serialize(item) for item in items]
 
-# ---------- 🔍 Query One Item with JSON ----------
+
+# ---------- 🔍 Query One with JSON ----------
 @app.post("/items/query")
 async def query_item(
     query: Dict[str, Any] = Body(...),
@@ -58,6 +77,7 @@ async def query_item(
         raise HTTPException(status_code=404, detail="Item not found")
     return serialize(item)
 
+
 # ---------- 📥 Insert Many ----------
 @app.post("/items/bulk")
 async def insert_many_items(
@@ -67,13 +87,14 @@ async def insert_many_items(
 ):
     if not items:
         raise HTTPException(status_code=400, detail="No data to insert")
-    
+
     col = get_collection(db, collection)
     result = await col.insert_many(items)
     inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
     return [serialize(item) for item in inserted_items]
 
-# ---------- 🌐 Drop & Import from Google Sheet, CSV, Excel ----------
+
+# ---------- 🌐 Drop & Import from Google Sheet / CSV / Excel ----------
 @app.post("/items/reset-and-import")
 async def drop_and_import(
     link: str = Body(..., embed=True),
@@ -106,6 +127,7 @@ async def drop_and_import(
         "sample": [serialize(item) for item in inserted_items[:3]]
     }
 
+
 # ---------- ✏️ Update One ----------
 @app.put("/items/{item_id}")
 async def update_item(
@@ -124,6 +146,7 @@ async def update_item(
     updated_item = await col.find_one({"_id": ObjectId(item_id)})
     return serialize(updated_item)
 
+
 # ---------- ❌ Delete One ----------
 @app.delete("/items/{item_id}")
 async def delete_item(
@@ -137,7 +160,8 @@ async def delete_item(
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "deleted"}
 
-# ---------- 📚 Get All Databases ----------
+
+# ---------- 📚 List All Databases ----------
 @app.get("/databases")
 async def list_databases():
     try:
@@ -147,7 +171,7 @@ async def list_databases():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---------- 📁 Get Collections from Database ----------
+# ---------- 📁 List Collections in DB ----------
 @app.get("/collections")
 async def list_collections(db: str = Query(...)):
     try:
