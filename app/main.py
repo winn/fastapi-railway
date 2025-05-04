@@ -45,18 +45,16 @@ def get_collection(client: AsyncIOMotorClient, db: str, collection: str):
 
 # ---------- ✅ Register a Cluster ----------
 @app.post("/clusters/register")
-async def register_cluster(data: Dict[str, str] = Body(...)):
-    cluster = data.get("cluster")
-    uri = data.get("uri")
-    if not cluster or not uri:
-        raise HTTPException(status_code=400, detail="Missing 'cluster' or 'uri'")
+async def register_cluster(
+    clustername: str = Body(...),
+    mongouri: str = Body(...)
+):
+    existing = await cluster_lookup_collection.find_one({"cluster": clustername})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Cluster name '{clustername}' already exists")
 
-    await cluster_lookup_collection.update_one(
-        {"cluster": cluster},
-        {"$set": {"uri": uri}},
-        upsert=True
-    )
-    return {"status": "registered", "cluster": cluster}
+    await cluster_lookup_collection.insert_one({"cluster": clustername, "uri": mongouri})
+    return {"status": "registered", "cluster": clustername}
 
 # ---------- 📚 List All Databases ----------
 @app.get("/databases")
