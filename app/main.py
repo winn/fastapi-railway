@@ -136,3 +136,23 @@ async def delete_item(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "deleted"}
+
+# ---------- 📚 Get All Databases ----------
+@app.get("/databases")
+async def list_databases():
+    try:
+        dbs = await client.list_database_names()
+        return {"databases": dbs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------- 📁 Get Collections from Database ----------
+@app.get("/collections")
+async def list_collections(db: str = Query(...)):
+    try:
+        db_obj = client[db]
+        collections = await db_obj.list_collection_names()
+        return {"database": db, "collections": collections}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
