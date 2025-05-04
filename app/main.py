@@ -1,11 +1,16 @@
-from fastapi import FastAPI, HTTPException, Request, Body
-from app.db import collection
+from fastapi import FastAPI, HTTPException, Request, Body, Query
 from app.models import Item, UpdateItem
 from bson import ObjectId
 from typing import Dict, Any, List
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
 import pandas as pd
 
 app = FastAPI()
+
+# ---------- ⚙️ Setup Mongo Client ----------
+MONGO_URI = os.getenv("MONGO_URL")
+client = AsyncIOMotorClient(MONGO_URI)
 
 # ---------- 🔄 MongoDB Document Serializer ----------
 def serialize(item) -> dict:
@@ -13,49 +18,71 @@ def serialize(item) -> dict:
     del item["_id"]
     return item
 
+# ---------- 🧩 Helper to Get Collection ----------
+def get_collection(db_name: str, collection_name: str):
+    db = client[db_name]
+    return db[collection_name]
 
 # ---------- ✅ Insert One ----------
 @app.post("/items")
-async def create_item(item: Item):
-    result = await collection.insert_one(item.dict())
-    new_item = await collection.find_one({"_id": result.inserted_id})
+async def create_item(
+    item: Item,
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
+    result = await col.insert_one(item.dict())
+    new_item = await col.find_one({"_id": result.inserted_id})
     return serialize(new_item)
-
 
 # ---------- 📦 Get All Items ----------
 @app.get("/items")
-async def get_items():
-    items = await collection.find().to_list(length=100)
+async def get_items(
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
+    items = await col.find().to_list(length=100)
     return [serialize(item) for item in items]
-
 
 # ---------- 🔍 Query One Item with JSON ----------
 @app.post("/items/query")
-async def query_item(query: Dict[str, Any] = Body(...)):
-    item = await collection.find_one(query)
+async def query_item(
+    query: Dict[str, Any] = Body(...),
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
+    item = await col.find_one(query)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return serialize(item)
 
-
 # ---------- 📥 Insert Many ----------
 @app.post("/items/bulk")
-async def insert_many_items(items: List[Dict[str, Any]] = Body(...)):
+async def insert_many_items(
+    items: List[Dict[str, Any]] = Body(...),
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
     if not items:
         raise HTTPException(status_code=400, detail="No data to insert")
     
-    result = await collection.insert_many(items)
-    inserted_items = await collection.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
+    col = get_collection(db, collection)
+    result = await col.insert_many(items)
+    inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
     return [serialize(item) for item in inserted_items]
 
-
-# ---------- 🌐 Import from Google Sheet, CSV, Excel ----------
+# ---------- 🌐 Drop & Import from Google Sheet, CSV, Excel ----------
 @app.post("/items/reset-and-import")
-async def drop_and_import(link: str = Body(..., embed=True)):
-    # 🧨 1. Drop collection
-    await collection.drop()
+async def drop_and_import(
+    link: str = Body(..., embed=True),
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
+    await col.drop()
 
-    # 📥 2. Load new data from Google Sheet / CSV / Excel
     try:
         if "csv" in link:
             df = pd.read_csv(link)
@@ -71,33 +98,41 @@ async def drop_and_import(link: str = Body(..., embed=True)):
     if not items:
         raise HTTPException(400, detail="No data to insert")
 
-    result = await collection.insert_many(items)
-    inserted_items = await collection.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
+    result = await col.insert_many(items)
+    inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
     return {
         "status": "collection dropped and reloaded",
         "inserted_count": len(inserted_items),
         "sample": [serialize(item) for item in inserted_items[:3]]
     }
 
-
-
 # ---------- ✏️ Update One ----------
 @app.put("/items/{item_id}")
-async def update_item(item_id: str, item: UpdateItem):
+async def update_item(
+    item_id: str,
+    item: UpdateItem,
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
     update_data = {k: v for k, v in item.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    result = await collection.update_one({"_id": ObjectId(item_id)}, {"$set": update_data})
+    result = await col.update_one({"_id": ObjectId(item_id)}, {"$set": update_data})
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
-    updated_item = await collection.find_one({"_id": ObjectId(item_id)})
+    updated_item = await col.find_one({"_id": ObjectId(item_id)})
     return serialize(updated_item)
-
 
 # ---------- ❌ Delete One ----------
 @app.delete("/items/{item_id}")
-async def delete_item(item_id: str):
-    result = await collection.delete_one({"_id": ObjectId(item_id)})
+async def delete_item(
+    item_id: str,
+    db: str = Query("railway_db"),
+    collection: str = Query("items")
+):
+    col = get_collection(db, collection)
+    result = await col.delete_one({"_id": ObjectId(item_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "deleted"}
