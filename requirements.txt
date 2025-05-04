@@ -1,6 +1,8 @@
 fastapi
 uvicorn
+pydantic
 motor
+pandas
+openpyxl
 python-dotenv
-pymongo
 
