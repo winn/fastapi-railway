@@ -30,16 +30,6 @@ def serialize(item) -> dict:
     del item["_id"]
     return item
 
-async def get_client_from_cluster(cluster: str = Query("default")) -> AsyncIOMotorClient:
-    if not cluster or cluster == "default":
-        return default_client
-
-    cluster_doc = await cluster_lookup_collection.find_one({"cluster": cluster})
-    if not cluster_doc:
-        raise HTTPException(status_code=404, detail=f"Cluster '{cluster}' not found")
-    uri = cluster_doc["uri"]
-    return AsyncIOMotorClient(uri)
-
 def get_collection(client: AsyncIOMotorClient, db: str, collection: str):
     return client[db][collection]
 
@@ -79,24 +69,150 @@ async def list_clusters(
     } for c in clusters]
 
 # ---------- 📚 List All Databases ----------
-@app.get("/databases")
-async def list_databases(cluster: str = Query("default")):
-    client = await get_client_from_cluster(cluster)
+@app.post("/databases")
+async def list_databases(mongouri: str = Body(...)):
     try:
+        client = AsyncIOMotorClient(mongouri)
         dbs = await client.list_database_names()
         return {"databases": dbs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # ---------- 📁 List Collections in DB ----------
-@app.get("/collections")
-async def list_collections(db: str = Query(...), cluster: str = Query("default")):
-    client = await get_client_from_cluster(cluster)
+@app.post("/collections")
+async def list_collections(
+    mongouri: str = Body(...),
+    db: str = Body(...)
+):
     try:
+        client = AsyncIOMotorClient(mongouri)
         db_obj = client[db]
         collections = await db_obj.list_collection_names()
         return {"database": db, "collections": collections}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Remaining endpoints stay unchanged ...
+# ---------- ✅ Insert One ----------
+@app.post("/items")
+async def create_item(
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...),
+    item: Dict[str, Any] = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    result = await col.insert_one(item)
+    new_item = await col.find_one({"_id": result.inserted_id})
+    return serialize(new_item)
+
+# ---------- 📦 Get All Items ----------
+@app.post("/items/all")
+async def get_items(
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    items = await col.find().to_list(100)
+    return [serialize(item) for item in items]
+
+# ---------- 🔍 Query One ----------
+@app.post("/items/query")
+async def query_item(
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...),
+    query: Dict[str, Any] = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    item = await col.find_one(query)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return serialize(item)
+
+# ---------- 📥 Insert Many ----------
+@app.post("/items/bulk")
+async def insert_many_items(
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...),
+    items: List[Dict[str, Any]] = Body(...)
+):
+    if not items:
+        raise HTTPException(status_code=400, detail="No data to insert")
+
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    result = await col.insert_many(items)
+    inserted = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(len(result.inserted_ids))
+    return [serialize(item) for item in inserted]
+
+# ---------- 🌐 Drop & Import ----------
+@app.post("/items/reset-and-import")
+async def drop_and_import(
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...),
+    link: str = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    await col.drop()
+
+    try:
+        if "csv" in link:
+            df = pd.read_csv(link)
+        elif "xls" in link:
+            df = pd.read_excel(link, engine='openpyxl')
+        else:
+            raise HTTPException(400, "Unsupported file type")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load file: {str(e)}")
+
+    df = df.fillna("")
+    items = df.to_dict(orient="records")
+    if not items:
+        raise HTTPException(status_code=400, detail="No data to insert")
+
+    result = await col.insert_many(items)
+    sample = await col.find().to_list(3)
+    return {
+        "status": "imported",
+        "inserted_count": len(result.inserted_ids),
+        "sample": [serialize(item) for item in sample]
+    }
+
+# ---------- ✏️ Update One ----------
+@app.put("/items/{item_id}")
+async def update_item(
+    item_id: str,
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...),
+    update: Dict[str, Any] = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    result = await col.update_one({"_id": ObjectId(item_id)}, {"$set": update})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    updated_item = await col.find_one({"_id": ObjectId(item_id)})
+    return serialize(updated_item)
+
+# ---------- ❌ Delete One ----------
+@app.delete("/items/{item_id}")
+async def delete_item(
+    item_id: str,
+    mongouri: str = Body(...),
+    db: str = Body(...),
+    collection: str = Body(...)
+):
+    client = AsyncIOMotorClient(mongouri)
+    col = get_collection(client, db, collection)
+    result = await col.delete_one({"_id": ObjectId(item_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"status": "deleted"}
