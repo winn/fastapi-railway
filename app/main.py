@@ -1,117 +1,152 @@
-from fastapi import FastAPI, HTTPException, Request, Body, Query
+from fastapi import FastAPI, HTTPException, Body, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.models import Item, UpdateItem
-from bson import ObjectId
-from typing import Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Dict, Any, List
+from bson import ObjectId
 import os
 import pandas as pd
 
-# ---------- 🚀 FastAPI App ----------
+# ---------- 🚀 App ----------
 app = FastAPI()
 
-# ---------- 🔓 CORS Settings ----------
-origins = [
-    "http://localhost:3000",  # สำหรับ dev frontend (React/Vue)
-    "https://your-frontend-domain.com",  # ✅ แก้เป็น domain จริงเมื่อ deploy
-]
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,           # หรือใช้ ["*"] ชั่วคราวใน dev
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# 👉 ใส่ CORS ตรงนี้
+# ---------- 🔓 CORS ----------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # สำหรับ dev
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ---------- ⚙️ Mongo Setup ----------
+# ---------- ⚙️ Default MongoDB (Railway) ----------
 MONGO_URI = os.getenv("MONGO_URL")
-client = AsyncIOMotorClient(MONGO_URI)
+default_client = AsyncIOMotorClient(MONGO_URI)
+default_db = default_client["railway_db"]
+cluster_lookup_collection = default_db["cluster_connections"]
 
-# ---------- 🔄 Serializer ----------
+# ---------- 🔧 Utility ----------
 def serialize(item) -> dict:
     item["id"] = str(item["_id"])
     del item["_id"]
     return item
 
-# ---------- 🔧 Collection Resolver ----------
-def get_collection(db_name: str, collection_name: str):
-    db = client[db_name]
-    return db[collection_name]
+async def get_client_from_cluster(cluster: str = Query("default")) -> AsyncIOMotorClient:
+    if not cluster or cluster == "default":
+        return default_client
 
+    cluster_doc = await cluster_lookup_collection.find_one({"cluster": cluster})
+    if not cluster_doc:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster}' not found")
+    uri = cluster_doc["uri"]
+    return AsyncIOMotorClient(uri)
+
+def get_collection(client: AsyncIOMotorClient, db: str, collection: str):
+    return client[db][collection]
+
+# ---------- ✅ Register a Cluster ----------
+@app.post("/clusters/register")
+async def register_cluster(data: Dict[str, str] = Body(...)):
+    cluster = data.get("cluster")
+    uri = data.get("uri")
+    if not cluster or not uri:
+        raise HTTPException(status_code=400, detail="Missing 'cluster' or 'uri'")
+
+    await cluster_lookup_collection.update_one(
+        {"cluster": cluster},
+        {"$set": {"uri": uri}},
+        upsert=True
+    )
+    return {"status": "registered", "cluster": cluster}
+
+# ---------- 📚 List All Databases ----------
+@app.get("/databases")
+async def list_databases(cluster: str = Query("default")):
+    client = await get_client_from_cluster(cluster)
+    try:
+        dbs = await client.list_database_names()
+        return {"databases": dbs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------- 📁 List Collections in DB ----------
+@app.get("/collections")
+async def list_collections(db: str = Query(...), cluster: str = Query("default")):
+    client = await get_client_from_cluster(cluster)
+    try:
+        db_obj = client[db]
+        collections = await db_obj.list_collection_names()
+        return {"database": db, "collections": collections}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ---------- ✅ Insert One ----------
 @app.post("/items")
 async def create_item(
-    item: Item,
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    item: Dict[str, Any] = Body(...),
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
-    result = await col.insert_one(item.dict())
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
+    result = await col.insert_one(item)
     new_item = await col.find_one({"_id": result.inserted_id})
     return serialize(new_item)
-
 
 # ---------- 📦 Get All Items ----------
 @app.get("/items")
 async def get_items(
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
-    items = await col.find().to_list(length=100)
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
+    items = await col.find().to_list(100)
     return [serialize(item) for item in items]
 
-
-# ---------- 🔍 Query One with JSON ----------
+# ---------- 🔍 Query One ----------
 @app.post("/items/query")
 async def query_item(
     query: Dict[str, Any] = Body(...),
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
     item = await col.find_one(query)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return serialize(item)
 
-
 # ---------- 📥 Insert Many ----------
 @app.post("/items/bulk")
 async def insert_many_items(
     items: List[Dict[str, Any]] = Body(...),
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
     if not items:
         raise HTTPException(status_code=400, detail="No data to insert")
 
-    col = get_collection(db, collection)
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
     result = await col.insert_many(items)
-    inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
-    return [serialize(item) for item in inserted_items]
+    inserted = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(len(result.inserted_ids))
+    return [serialize(item) for item in inserted]
 
-
-# ---------- 🌐 Drop & Import from Google Sheet / CSV / Excel ----------
+# ---------- 🌐 Drop & Import ----------
 @app.post("/items/reset-and-import")
 async def drop_and_import(
     link: str = Body(..., embed=True),
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
     await col.drop()
 
     try:
@@ -120,73 +155,51 @@ async def drop_and_import(
         elif "xls" in link:
             df = pd.read_excel(link, engine='openpyxl')
         else:
-            raise HTTPException(400, "Unsupported file type. Only .csv or .xlsx allowed.")
+            raise HTTPException(400, "Unsupported file type")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to load file: {str(e)}")
 
     df = df.fillna("")
     items = df.to_dict(orient="records")
     if not items:
-        raise HTTPException(400, detail="No data to insert")
+        raise HTTPException(status_code=400, detail="No data to insert")
 
     result = await col.insert_many(items)
-    inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
+    sample = await col.find().to_list(3)
     return {
-        "status": "collection dropped and reloaded",
-        "inserted_count": len(inserted_items),
-        "sample": [serialize(item) for item in inserted_items[:3]]
+        "status": "imported",
+        "inserted_count": len(result.inserted_ids),
+        "sample": [serialize(item) for item in sample]
     }
-
 
 # ---------- ✏️ Update One ----------
 @app.put("/items/{item_id}")
 async def update_item(
     item_id: str,
-    item: UpdateItem,
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    update: Dict[str, Any] = Body(...),
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
-    update_data = {k: v for k, v in item.dict().items() if v is not None}
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    result = await col.update_one({"_id": ObjectId(item_id)}, {"$set": update_data})
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
+    result = await col.update_one({"_id": ObjectId(item_id)}, {"$set": update})
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     updated_item = await col.find_one({"_id": ObjectId(item_id)})
     return serialize(updated_item)
 
-
 # ---------- ❌ Delete One ----------
 @app.delete("/items/{item_id}")
 async def delete_item(
     item_id: str,
-    db: str = Query("railway_db"),
-    collection: str = Query("items")
+    db: str = Query("test"),
+    collection: str = Query("items"),
+    cluster: str = Query("default")
 ):
-    col = get_collection(db, collection)
+    client = await get_client_from_cluster(cluster)
+    col = get_collection(client, db, collection)
     result = await col.delete_one({"_id": ObjectId(item_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "deleted"}
-
-
-# ---------- 📚 List All Databases ----------
-@app.get("/databases")
-async def list_databases():
-    try:
-        dbs = await client.list_database_names()
-        return {"databases": dbs}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------- 📁 List Collections in DB ----------
-@app.get("/collections")
-async def list_collections(db: str = Query(...)):
-    try:
-        db_obj = client[db]
-        collections = await db_obj.list_collection_names()
-        return {"database": db, "collections": collections}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
