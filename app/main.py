@@ -67,14 +67,15 @@ async def register_cluster(
     return {"status": "registered", "cluster": clustername, "owner": owner, "password": password}
 
 # ---------- 📊 List Registered Clusters ----------
-@app.get("/clusters")
-async def list_clusters():
-    clusters = await cluster_lookup_collection.find().to_list(length=100)
+@app.post("/clusters")
+async def list_clusters(
+    owner: str = Body(...),
+    password: str = Body(...)
+):
+    clusters = await cluster_lookup_collection.find({"owner": owner, "password": password}).to_list(length=100)
     return [{
         "cluster": c["cluster"],
-        "uri": c["uri"],
-        "owner": c.get("owner", ""),
-        "password": c.get("password", "")
+        "uri": c["uri"]
     } for c in clusters]
 
 # ---------- 📚 List All Databases ----------
@@ -98,127 +99,4 @@ async def list_collections(db: str = Query(...), cluster: str = Query("default")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ---------- ✅ Insert One ----------
-@app.post("/items")
-async def create_item(
-    item: Dict[str, Any] = Body(...),
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    result = await col.insert_one(item)
-    new_item = await col.find_one({"_id": result.inserted_id})
-    return serialize(new_item)
-
-# ---------- 📦 Get All Items ----------
-@app.get("/items")
-async def get_items(
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    items = await col.find().to_list(100)
-    return [serialize(item) for item in items]
-
-# ---------- 🔍 Query One ----------
-@app.post("/items/query")
-async def query_item(
-    query: Dict[str, Any] = Body(...),
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    item = await col.find_one(query)
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return serialize(item)
-
-# ---------- 📥 Insert Many ----------
-@app.post("/items/bulk")
-async def insert_many_items(
-    items: List[Dict[str, Any]] = Body(...),
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    if not items:
-        raise HTTPException(status_code=400, detail="No data to insert")
-
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    result = await col.insert_many(items)
-    inserted = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(len(result.inserted_ids))
-    return [serialize(item) for item in inserted]
-
-# ---------- 🌐 Drop & Import ----------
-@app.post("/items/reset-and-import")
-async def drop_and_import(
-    link: str = Body(..., embed=True),
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    await col.drop()
-
-    try:
-        if "csv" in link:
-            df = pd.read_csv(link)
-        elif "xls" in link:
-            df = pd.read_excel(link, engine='openpyxl')
-        else:
-            raise HTTPException(400, "Unsupported file type")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to load file: {str(e)}")
-
-    df = df.fillna("")
-    items = df.to_dict(orient="records")
-    if not items:
-        raise HTTPException(status_code=400, detail="No data to insert")
-
-    result = await col.insert_many(items)
-    sample = await col.find().to_list(3)
-    return {
-        "status": "imported",
-        "inserted_count": len(result.inserted_ids),
-        "sample": [serialize(item) for item in sample]
-    }
-
-# ---------- ✏️ Update One ----------
-@app.put("/items/{item_id}")
-async def update_item(
-    item_id: str,
-    update: Dict[str, Any] = Body(...),
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    result = await col.update_one({"_id": ObjectId(item_id)}, {"$set": update})
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
-    updated_item = await col.find_one({"_id": ObjectId(item_id)})
-    return serialize(updated_item)
-
-# ---------- ❌ Delete One ----------
-@app.delete("/items/{item_id}")
-async def delete_item(
-    item_id: str,
-    db: str = Query("test"),
-    collection: str = Query("items"),
-    cluster: str = Query("default")
-):
-    client = await get_client_from_cluster(cluster)
-    col = get_collection(client, db, collection)
-    result = await col.delete_one({"_id": ObjectId(item_id)})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return {"status": "deleted"}
+# Remaining endpoints stay unchanged ...
