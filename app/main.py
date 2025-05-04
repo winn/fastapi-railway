@@ -50,8 +50,12 @@ async def insert_many_items(items: List[Dict[str, Any]] = Body(...)):
 
 
 # ---------- 🌐 Import from Google Sheet, CSV, Excel ----------
-@app.post("/items/import")
-async def import_from_sheet(link: str = Body(..., embed=True)):
+@app.post("/items/reset-and-import")
+async def drop_and_import(link: str = Body(..., embed=True)):
+    # 🧨 1. Drop collection
+    await collection.drop()
+
+    # 📥 2. Load new data from Google Sheet / CSV / Excel
     try:
         if "csv" in link:
             df = pd.read_csv(link)
@@ -62,14 +66,19 @@ async def import_from_sheet(link: str = Body(..., embed=True)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
 
-    df = df.fillna("")  # Clean NaN
+    df = df.fillna("")
     items = df.to_dict(orient="records")
     if not items:
         raise HTTPException(400, detail="No data to insert")
 
     result = await collection.insert_many(items)
     inserted_items = await collection.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
-    return {"status": "inserted"}
+    return {
+        "status": "collection dropped and reloaded",
+        "inserted_count": len(inserted_items),
+        "sample": [serialize(item) for item in inserted_items[:3]]
+    }
+
 
 
 # ---------- ✏️ Update One ----------
