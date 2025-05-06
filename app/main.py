@@ -116,9 +116,9 @@ async def drop_and_import(
 
     try:
         if "csv" in link:
-            df = pd.read_csv(link)
+            df = pd.read_csv(link,dtype='str')
         elif "xls" in link:
-            df = pd.read_excel(link, engine='openpyxl')
+            df = pd.read_excel(link, engine='openpyxl',dtype='str')
         else:
             raise HTTPException(400, "Unsupported file type. Only .csv or .xlsx allowed.")
     except Exception as e:
