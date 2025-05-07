@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Body, Query
+from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from app.models import Item, UpdateItem
 from bson import ObjectId
@@ -31,8 +31,7 @@ def serialize(item) -> dict:
 
 # ---------- 🔧 Collection Resolver ----------
 def get_collection(db_name: str, collection_name: str):
-    db = client[db_name]
-    return db[collection_name]
+    return client[db_name][collection_name]
 
 # ---------- ✅ Insert One ----------
 @app.post("/items")
@@ -96,9 +95,9 @@ async def drop_and_import(
 
     try:
         if "csv" in link:
-            df = pd.read_csv(link,dtype='str')
+            df = pd.read_csv(link, dtype='str')
         elif "xls" in link:
-            df = pd.read_excel(link, engine='openpyxl',dtype='str')
+            df = pd.read_excel(link, engine='openpyxl', dtype='str')
         else:
             raise HTTPException(400, "Unsupported file type. Only .csv or .xlsx allowed.")
     except Exception as e:
@@ -161,8 +160,7 @@ async def list_databases():
 @app.get("/collections")
 async def list_collections(db: str = Query(...)):
     try:
-        db_obj = client[db]
-        collections = await db_obj.list_collection_names()
+        collections = await client[db].list_collection_names()
         return {"database": db, "collections": collections}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -187,12 +185,11 @@ async def delete_database(db_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting database: {str(e)}")
 
-# 📂 List all collections in database
+# 📂 List all collections in a database
 @app.get("/admin/databases/{db_name}/collections")
 async def list_collections_in_database(db_name: str):
     try:
-        db_obj = client[db_name]
-        collections = await db_obj.list_collection_names()
+        collections = await client[db_name].list_collection_names()
         return {"database": db_name, "collections": collections}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing collections: {str(e)}")
@@ -205,3 +202,27 @@ async def delete_collection(db_name: str, collection_name: str):
         return {"status": f"Collection '{collection_name}' in database '{db_name}' deleted successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting collection: {str(e)}")
+
+# ✅ Create a database (lazy init with dummy insert)
+@app.post("/admin/databases/{db_name}")
+async def create_database(db_name: str, collection_name: str = Body("temp_collection", embed=True)):
+    try:
+        col = client[db_name][collection_name]
+        dummy = {"_init": True}
+        result = await col.insert_one(dummy)
+        await col.delete_one({"_id": result.inserted_id})
+        return {"status": f"Database '{db_name}' with collection '{collection_name}' created (lazy init)."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating database: {str(e)}")
+
+# ✅ Create a collection (lazy init)
+@app.post("/admin/databases/{db_name}/collections/{collection_name}")
+async def create_collection(db_name: str, collection_name: str):
+    try:
+        col = client[db_name][collection_name]
+        dummy = {"_init": True}
+        result = await col.insert_one(dummy)
+        await col.delete_one({"_id": result.inserted_id})
+        return {"status": f"Collection '{collection_name}' created in database '{db_name}' (lazy init)."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating collection: {str(e)}")
