@@ -11,20 +11,6 @@ import pandas as pd
 app = FastAPI()
 
 # ---------- 🔓 CORS Settings ----------
-origins = [
-    "http://localhost:3000",  # สำหรับ dev frontend (React/Vue)
-    "https://your-frontend-domain.com",  # ✅ แก้เป็น domain จริงเมื่อ deploy
-]
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,           # หรือใช้ ["*"] ชั่วคราวใน dev
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# 👉 ใส่ CORS ตรงนี้
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # สำหรับ dev
@@ -32,7 +18,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------- ⚙️ Mongo Setup ----------
 MONGO_URI = os.getenv("MONGO_URL")
@@ -49,7 +34,6 @@ def get_collection(db_name: str, collection_name: str):
     db = client[db_name]
     return db[collection_name]
 
-
 # ---------- ✅ Insert One ----------
 @app.post("/items")
 async def create_item(
@@ -62,7 +46,6 @@ async def create_item(
     new_item = await col.find_one({"_id": result.inserted_id})
     return serialize(new_item)
 
-
 # ---------- 📦 Get All Items ----------
 @app.get("/items")
 async def get_items(
@@ -72,7 +55,6 @@ async def get_items(
     col = get_collection(db, collection)
     items = await col.find().to_list(length=100)
     return [serialize(item) for item in items]
-
 
 # ---------- 🔍 Query One with JSON ----------
 @app.post("/items/query")
@@ -86,7 +68,6 @@ async def query_item(
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return serialize(item)
-
 
 # ---------- 📥 Insert Many ----------
 @app.post("/items/bulk")
@@ -102,7 +83,6 @@ async def insert_many_items(
     result = await col.insert_many(items)
     inserted_items = await col.find({"_id": {"$in": result.inserted_ids}}).to_list(length=len(result.inserted_ids))
     return [serialize(item) for item in inserted_items]
-
 
 # ---------- 🌐 Drop & Import from Google Sheet / CSV / Excel ----------
 @app.post("/items/reset-and-import")
@@ -137,7 +117,6 @@ async def drop_and_import(
         "sample": [serialize(item) for item in inserted_items[:3]]
     }
 
-
 # ---------- ✏️ Update One ----------
 @app.put("/items/{item_id}")
 async def update_item(
@@ -156,7 +135,6 @@ async def update_item(
     updated_item = await col.find_one({"_id": ObjectId(item_id)})
     return serialize(updated_item)
 
-
 # ---------- ❌ Delete One ----------
 @app.delete("/items/{item_id}")
 async def delete_item(
@@ -170,7 +148,6 @@ async def delete_item(
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "deleted"}
 
-
 # ---------- 📚 List All Databases ----------
 @app.get("/databases")
 async def list_databases():
@@ -180,8 +157,7 @@ async def list_databases():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ---------- 📁 List Collections in DB ----------
+# ---------- 📁 List Collections ----------
 @app.get("/collections")
 async def list_collections(db: str = Query(...)):
     try:
@@ -190,3 +166,42 @@ async def list_collections(db: str = Query(...)):
         return {"database": db, "collections": collections}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# -------------------------- 🔧 ADMIN APIs --------------------------
+
+# ✅ View all databases
+@app.get("/admin/databases")
+async def view_all_databases():
+    try:
+        dbs = await client.list_database_names()
+        return {"databases": dbs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ❌ Delete a database
+@app.delete("/admin/databases/{db_name}")
+async def delete_database(db_name: str):
+    try:
+        await client.drop_database(db_name)
+        return {"status": f"Database '{db_name}' deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting database: {str(e)}")
+
+# 📂 List all collections in database
+@app.get("/admin/databases/{db_name}/collections")
+async def list_collections_in_database(db_name: str):
+    try:
+        db_obj = client[db_name]
+        collections = await db_obj.list_collection_names()
+        return {"database": db_name, "collections": collections}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing collections: {str(e)}")
+
+# ❌ Delete a collection in a database
+@app.delete("/admin/databases/{db_name}/collections/{collection_name}")
+async def delete_collection(db_name: str, collection_name: str):
+    try:
+        await client[db_name][collection_name].drop()
+        return {"status": f"Collection '{collection_name}' in database '{db_name}' deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting collection: {str(e)}")
