@@ -52,7 +52,7 @@ async def get_items(
     collection: str = Query("items")
 ):
     col = get_collection(db, collection)
-    items = await col.find().to_list(length=100)
+    items = await col.find().to_list()
     return [serialize(item) for item in items]
 
 # ---------- 🔍 Query One with JSON ----------
