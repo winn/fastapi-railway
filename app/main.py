@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # ---------- ⚙️ Mongo Setup ----------
-MONGO_URI = os.getenv("MONGO_URL")
+MONGO_URI = os.getenv("MY_MONGO")
 client = AsyncIOMotorClient(MONGO_URI)
 
 # ---------- 🔄 Serializer ----------

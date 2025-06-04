@@ -5,6 +5,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 MONGO_URI = os.getenv("MY_MONGO")
 print("🌐 MONGO_URI =", MONGO_URI)
 client = AsyncIOMotorClient(MONGO_URI)
-db = client["railway_db"]
+db = client["Cluster0"]
 collection = db["items"]
 
